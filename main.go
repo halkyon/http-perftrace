@@ -45,14 +45,14 @@ type result struct {
 	roundTrip        time.Duration
 }
 
-func (d *result) summary() string {
+func (r *result) summary() string {
 	return fmt.Sprintf(
 		"DNS: %s, TCP: %s, TLS: %s, Server processing: %s, Total: %s",
-		d.dnsLookup,
-		d.tcpConnect,
-		d.tlsHandshake,
-		d.serverProcessing,
-		d.roundTrip,
+		r.dnsLookup,
+		r.tcpConnect,
+		r.tlsHandshake,
+		r.serverProcessing,
+		r.roundTrip,
 	)
 }
 
