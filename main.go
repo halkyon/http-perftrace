@@ -38,6 +38,7 @@ type traceTimes struct {
 }
 
 type result struct {
+	response         *http.Response
 	dnsLookup        time.Duration
 	tcpConnect       time.Duration
 	tlsHandshake     time.Duration
@@ -47,7 +48,9 @@ type result struct {
 
 func (r *result) summary() string {
 	return fmt.Sprintf(
-		"DNS: %s, TCP: %s, TLS: %s, Server processing: %s, Total: %s",
+		"%s %s - DNS: %s, TCP: %s, TLS: %s, Server processing: %s, Total: %s",
+		r.response.Proto,
+		r.response.Status,
 		r.dnsLookup,
 		r.tcpConnect,
 		r.tlsHandshake,
@@ -108,13 +111,15 @@ func runTest(addr string, results chan *result, stdout io.Writer) error {
 	}
 
 	times.roundTripStart = time.Now()
-	_, err = http.DefaultTransport.RoundTrip(req)
+	response, err := http.DefaultTransport.RoundTrip(req)
 	if err != nil {
 		return err
 	}
+
 	times.roundTripDone = time.Now()
 
 	result := &result{}
+	result.response = response
 	result.load(times)
 
 	results <- result
