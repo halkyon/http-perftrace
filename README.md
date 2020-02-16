@@ -5,8 +5,8 @@ HTTP performance for a given URL. It's basically like siege or something, but wr
 
 ## TODO
 
-* Configurable timeout
-* Exit signal
+* Configurable timeout, use context for this?
+* Exit signal, use context for this?
 * Run for a duration instead of just for the number of concurrent requests
 * Double check hooks in `httptrace.ClientTrace` and if they make sense for this implementation
 * Output summary of all requests made (averages, 95th percentile, etc)
