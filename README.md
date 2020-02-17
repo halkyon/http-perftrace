@@ -27,7 +27,8 @@ Running for 1s with 1 concurrent workers
 
 HTTP/2.0 200 OK - DNS: 3.9891ms, TCP: 53.363ms, TLS: 170.0507ms, Server processing: 187.4985ms, Total: 416.896ms
 HTTP/2.0 200 OK - DNS: 997.3µs, TCP: 61.8344ms, TLS: 152.6072ms, Server processing: 191.4877ms, Total: 406.9266ms
-Test ended after 1s, 2 requests made
+
+Test ended. 2 requests made
 
 Average DNS lookup: 2.4932ms
 Average TCP connect: 57.5987ms

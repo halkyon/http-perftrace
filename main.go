@@ -152,12 +152,12 @@ func run(stdout io.Writer) error {
 	for {
 		select {
 		case <-done:
-			fmt.Fprintf(stdout, "Test ended. %d requests made\n\n", len(summary.roundTrips))
+			fmt.Fprintf(stdout, "\nTest ended. %d requests made\n\n", len(summary.roundTrips))
 			fmt.Fprintln(stdout, summary)
 			return nil
 		case <-interrupt:
 			// todo: cleanup this duplication with the done case above
-			fmt.Fprintf(stdout, "Test ended. %d requests made\n\n", len(summary.roundTrips))
+			fmt.Fprintf(stdout, "\nTest ended. %d requests made\n\n", len(summary.roundTrips))
 			fmt.Fprintln(stdout, summary)
 			signal.Stop(interrupt)
 			return errors.New("interrupt signal received")
