@@ -20,22 +20,9 @@ const (
 	exitFail = 1
 )
 
-func main() {
-	if err := run(os.Stdout); err != nil {
-		fmt.Fprintf(os.Stderr, "%s\n", err)
-		os.Exit(exitFail)
-	}
-}
+type result struct {
+	response *http.Response
 
-func average(list []*time.Duration) time.Duration {
-	var total time.Duration
-	for _, r := range list {
-		total += *r
-	}
-	return total / time.Duration(len(list))
-}
-
-type traceTimes struct {
 	dnsStart          time.Time
 	dnsDone           time.Time
 	connectStart      time.Time
@@ -48,50 +35,68 @@ type traceTimes struct {
 	roundTripDone     time.Time
 }
 
-type result struct {
-	response         *http.Response
-	dnsLookup        time.Duration
-	tcpConnect       time.Duration
-	tlsHandshake     time.Duration
-	serverProcessing time.Duration
-	roundTrip        time.Duration
+func (r *result) dnsLookup() time.Duration {
+	return r.dnsDone.Sub(r.dnsStart)
 }
 
-func (r *result) load(t *traceTimes) {
-	r.dnsLookup = t.dnsDone.Sub(t.dnsStart)
-	r.tcpConnect = t.connectDone.Sub(t.connectStart)
-	r.tlsHandshake = t.tlsHandshakeDone.Sub(t.tlsHandshakeStart)
-	r.serverProcessing = t.firstResponseByte.Sub(t.conn)
-	r.roundTrip = t.roundTripDone.Sub(t.roundTripStart)
+func (r *result) tcpConnect() time.Duration {
+	return r.connectDone.Sub(r.connectStart)
 }
 
-func (r *result) summary() string {
+func (r *result) tlsHandshake() time.Duration {
+	return r.tlsHandshakeDone.Sub(r.tlsHandshakeStart)
+}
+
+func (r *result) serverProcessing() time.Duration {
+	return r.firstResponseByte.Sub(r.conn)
+}
+
+func (r *result) roundTrip() time.Duration {
+	return r.roundTripDone.Sub(r.roundTripStart)
+}
+
+func (r *result) String() string {
 	return fmt.Sprintf(
 		"%s %s - DNS: %s, TCP: %s, TLS: %s, Server processing: %s, Total: %s",
 		r.response.Proto,
 		r.response.Status,
-		r.dnsLookup,
-		r.tcpConnect,
-		r.tlsHandshake,
-		r.serverProcessing,
-		r.roundTrip,
+		r.dnsLookup(),
+		r.tcpConnect(),
+		r.tlsHandshake(),
+		r.serverProcessing(),
+		r.roundTrip(),
 	)
 }
 
+func main() {
+	if err := run(os.Stdout); err != nil {
+		fmt.Fprintf(os.Stderr, "%s\n", err)
+		os.Exit(exitFail)
+	}
+}
+
+func average(list []time.Duration) time.Duration {
+	var total time.Duration
+	for _, r := range list {
+		total += r
+	}
+	return total / time.Duration(len(list))
+}
+
 type resultSummary struct {
-	dnsLookups       []*time.Duration
-	tcpConnects      []*time.Duration
-	tlsHandshakes    []*time.Duration
-	serverProcessing []*time.Duration
-	roundTrips       []*time.Duration
+	dnsLookups       []time.Duration
+	tcpConnects      []time.Duration
+	tlsHandshakes    []time.Duration
+	serverProcessing []time.Duration
+	roundTrips       []time.Duration
 }
 
 func (s *resultSummary) load(r *result) {
-	s.dnsLookups = append(s.dnsLookups, &r.dnsLookup)
-	s.tcpConnects = append(s.tcpConnects, &r.tcpConnect)
-	s.tlsHandshakes = append(s.tlsHandshakes, &r.tlsHandshake)
-	s.serverProcessing = append(s.serverProcessing, &r.serverProcessing)
-	s.roundTrips = append(s.roundTrips, &r.roundTrip)
+	s.dnsLookups = append(s.dnsLookups, r.dnsLookup())
+	s.tcpConnects = append(s.tcpConnects, r.tcpConnect())
+	s.tlsHandshakes = append(s.tlsHandshakes, r.tlsHandshake())
+	s.serverProcessing = append(s.serverProcessing, r.serverProcessing())
+	s.roundTrips = append(s.roundTrips, r.roundTrip())
 }
 
 func (s *resultSummary) String() string {
@@ -137,7 +142,7 @@ func run(stdout io.Writer) error {
 		go func(results chan *result) {
 			for {
 				result := &result{}
-				err := runTest(result, url)
+				err := runTest(url, result)
 				if err != nil {
 					errs <- err
 					continue
@@ -163,21 +168,33 @@ func run(stdout io.Writer) error {
 			return errors.New("interrupt signal received")
 		case result := <-results:
 			summary.load(result)
-			fmt.Fprintln(stdout, result.summary())
+			fmt.Fprintln(stdout, result)
 		case err := <-errs:
 			return err
 		}
 	}
 }
 
-func runTest(result *result, url string) error {
-	times := &traceTimes{}
-	req, err := newRequest(url, times)
+func runTest(url string, result *result) error {
+	req, err := newRequest(url, result)
 	if err != nil {
 		return err
 	}
 
-	transport := &http.Transport{
+	transport := newTransport()
+	result.roundTripStart = time.Now()
+	response, err := transport.RoundTrip(req)
+	if err != nil {
+		return err
+	}
+	result.roundTripDone = time.Now()
+	result.response = response
+
+	return nil
+}
+
+func newTransport() *http.Transport {
+	return &http.Transport{
 		Proxy: http.ProxyFromEnvironment,
 		DialContext: (&net.Dialer{
 			Timeout:   30 * time.Second,
@@ -189,21 +206,9 @@ func runTest(result *result, url string) error {
 		TLSHandshakeTimeout:   10 * time.Second,
 		ExpectContinueTimeout: 1 * time.Second,
 	}
-
-	times.roundTripStart = time.Now()
-	response, err := transport.RoundTrip(req)
-	if err != nil {
-		return err
-	}
-	times.roundTripDone = time.Now()
-
-	result.response = response
-	result.load(times)
-
-	return nil
 }
 
-func newRequest(url string, times *traceTimes) (*http.Request, error) {
+func newRequest(url string, result *result) (*http.Request, error) {
 	req, err := http.NewRequest("GET", url, nil)
 	if err != nil {
 		return nil, err
@@ -212,28 +217,28 @@ func newRequest(url string, times *traceTimes) (*http.Request, error) {
 	ctx := req.Context()
 	trace := &httptrace.ClientTrace{
 		DNSStart: func(_ httptrace.DNSStartInfo) {
-			times.dnsStart = time.Now()
+			result.dnsStart = time.Now()
 		},
 		DNSDone: func(_ httptrace.DNSDoneInfo) {
-			times.dnsDone = time.Now()
+			result.dnsDone = time.Now()
 		},
 		ConnectStart: func(_, _ string) {
-			times.connectStart = time.Now()
+			result.connectStart = time.Now()
 		},
 		ConnectDone: func(_, _ string, _ error) {
-			times.connectDone = time.Now()
+			result.connectDone = time.Now()
 		},
 		GotConn: func(_ httptrace.GotConnInfo) {
-			times.conn = time.Now()
+			result.conn = time.Now()
 		},
 		GotFirstResponseByte: func() {
-			times.firstResponseByte = time.Now()
+			result.firstResponseByte = time.Now()
 		},
 		TLSHandshakeStart: func() {
-			times.tlsHandshakeStart = time.Now()
+			result.tlsHandshakeStart = time.Now()
 		},
 		TLSHandshakeDone: func(_ tls.ConnectionState, _ error) {
-			times.tlsHandshakeDone = time.Now()
+			result.tlsHandshakeDone = time.Now()
 		},
 	}
 
