@@ -139,7 +139,7 @@ func run(stdout io.Writer) error {
 	signal.Notify(interrupt, os.Interrupt)
 
 	for i := 0; i < concurrency; i++ {
-		go func(results chan *result) {
+		go func(results chan *result, errs chan error) {
 			for {
 				result := &result{}
 				err := runTest(url, result)
@@ -149,7 +149,7 @@ func run(stdout io.Writer) error {
 				}
 				results <- result
 			}
-		}(results)
+		}(results, errs)
 	}
 
 	summary := &resultSummary{}
