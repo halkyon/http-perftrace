@@ -6,16 +6,18 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"net/http/httptrace"
 	"os"
+	"os/signal"
 	"runtime"
+	"strings"
 	"time"
 )
 
 const (
-	exitFail       = 1
-	timeoutSeconds = 60
+	exitFail = 1
 )
 
 func main() {
@@ -23,6 +25,14 @@ func main() {
 		fmt.Fprintf(os.Stderr, "%s\n", err)
 		os.Exit(exitFail)
 	}
+}
+
+func average(list []*time.Duration) time.Duration {
+	var total time.Duration
+	for _, r := range list {
+		total += *r
+	}
+	return total / time.Duration(len(list))
 }
 
 type traceTimes struct {
@@ -45,6 +55,33 @@ type result struct {
 	tlsHandshake     time.Duration
 	serverProcessing time.Duration
 	roundTrip        time.Duration
+}
+
+type resultSummary struct {
+	dnsLookups       []*time.Duration
+	tcpConnects      []*time.Duration
+	tlsHandshakes    []*time.Duration
+	serverProcessing []*time.Duration
+	roundTrips       []*time.Duration
+}
+
+func (s *resultSummary) load(r *result) {
+	s.dnsLookups = append(s.dnsLookups, &r.dnsLookup)
+	s.tcpConnects = append(s.tcpConnects, &r.tcpConnect)
+	s.tlsHandshakes = append(s.tlsHandshakes, &r.tlsHandshake)
+	s.serverProcessing = append(s.serverProcessing, &r.serverProcessing)
+	s.roundTrips = append(s.roundTrips, &r.roundTrip)
+}
+
+func (s *resultSummary) String() string {
+	var sb strings.Builder
+	// todo: maybe use of templates would be better here
+	sb.WriteString(fmt.Sprintf("Average DNS lookup: %s\n", average(s.dnsLookups)))
+	sb.WriteString(fmt.Sprintf("Average TCP connect: %s\n", average(s.tcpConnects)))
+	sb.WriteString(fmt.Sprintf("Average TLS handshake: %s\n", average(s.tlsHandshakes)))
+	sb.WriteString(fmt.Sprintf("Average server processing: %s\n", average(s.serverProcessing)))
+	sb.WriteString(fmt.Sprintf("Average round trip: %s\n", average(s.roundTrips)))
+	return sb.String()
 }
 
 func (r *result) summary() string {
@@ -71,9 +108,11 @@ func (r *result) load(t *traceTimes) {
 func run(stdout io.Writer) error {
 	var url string
 	var concurrency int
+	var testDuration time.Duration
 
 	flag.StringVar(&url, "u", "", "url to test")
 	flag.IntVar(&concurrency, "c", 1, "number of concurrent requests")
+	flag.DurationVar(&testDuration, "d", 10*time.Second, "time to run tests for")
 	flag.Parse()
 
 	if url == "" {
@@ -83,29 +122,52 @@ func run(stdout io.Writer) error {
 		return errors.New("-c should be greater or equal to 1")
 	}
 
+	fmt.Fprintf(stdout, "Running for %s with %d concurrent workers\n\n", testDuration, concurrency)
+
 	runtime.GOMAXPROCS(concurrency)
 
 	results := make(chan *result)
+	errs := make(chan error)
+	done := time.After(testDuration)
+
+	interrupt := make(chan os.Signal, 1)
+	signal.Notify(interrupt, os.Interrupt)
+
 	for i := 0; i < concurrency; i++ {
-		go func() {
-			result := &result{}
-			runTest(result, url)
-			results <- result
-		}()
+		go func(results chan *result) {
+			for {
+				result := &result{}
+				err := runTest(result, url)
+				if err != nil {
+					errs <- err
+					continue
+				}
+				results <- result
+			}
+		}(results)
 	}
 
-	timeout := time.After(timeoutSeconds * time.Second)
+	summary := &resultSummary{}
 
-	for i := 0; i < concurrency; i++ {
+	for {
 		select {
+		case <-done:
+			fmt.Fprintf(stdout, "Test ended. %d requests made\n\n", len(summary.roundTrips))
+			fmt.Fprintln(stdout, summary)
+			return nil
+		case <-interrupt:
+			// todo: cleanup this duplication with the done case above
+			fmt.Fprintf(stdout, "Test ended. %d requests made\n\n", len(summary.roundTrips))
+			fmt.Fprintln(stdout, summary)
+			signal.Stop(interrupt)
+			return errors.New("interrupt signal received")
 		case result := <-results:
+			summary.load(result)
 			fmt.Fprintln(stdout, result.summary())
-		case <-timeout:
-			return fmt.Errorf("timed out after %d seconds", timeoutSeconds)
+		case err := <-errs:
+			return err
 		}
 	}
-
-	return nil
 }
 
 func runTest(result *result, url string) error {
@@ -115,12 +177,24 @@ func runTest(result *result, url string) error {
 		return err
 	}
 
+	transport := &http.Transport{
+		Proxy: http.ProxyFromEnvironment,
+		DialContext: (&net.Dialer{
+			Timeout:   30 * time.Second,
+			DualStack: true,
+		}).DialContext,
+		DisableKeepAlives:     true,
+		ForceAttemptHTTP2:     true,
+		MaxIdleConns:          100,
+		TLSHandshakeTimeout:   10 * time.Second,
+		ExpectContinueTimeout: 1 * time.Second,
+	}
+
 	times.roundTripStart = time.Now()
-	response, err := http.DefaultTransport.RoundTrip(req)
+	response, err := transport.RoundTrip(req)
 	if err != nil {
 		return err
 	}
-
 	times.roundTripDone = time.Now()
 
 	result.response = response
