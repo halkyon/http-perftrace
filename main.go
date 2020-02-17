@@ -88,7 +88,9 @@ func run(stdout io.Writer) error {
 	results := make(chan *result)
 	for i := 0; i < concurrency; i++ {
 		go func() {
-			runTest(url, results, stdout)
+			result := &result{}
+			runTest(result, url)
+			results <- result
 		}()
 	}
 
@@ -106,7 +108,7 @@ func run(stdout io.Writer) error {
 	return nil
 }
 
-func runTest(url string, results chan *result, stdout io.Writer) error {
+func runTest(result *result, url string) error {
 	times := &traceTimes{}
 	req, err := newRequest(url, times)
 	if err != nil {
@@ -121,11 +123,8 @@ func runTest(url string, results chan *result, stdout io.Writer) error {
 
 	times.roundTripDone = time.Now()
 
-	result := &result{}
 	result.response = response
 	result.load(times)
-
-	results <- result
 
 	return nil
 }
