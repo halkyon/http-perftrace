@@ -57,6 +57,27 @@ type result struct {
 	roundTrip        time.Duration
 }
 
+func (r *result) load(t *traceTimes) {
+	r.dnsLookup = t.dnsDone.Sub(t.dnsStart)
+	r.tcpConnect = t.connectDone.Sub(t.connectStart)
+	r.tlsHandshake = t.tlsHandshakeDone.Sub(t.tlsHandshakeStart)
+	r.serverProcessing = t.firstResponseByte.Sub(t.conn)
+	r.roundTrip = t.roundTripDone.Sub(t.roundTripStart)
+}
+
+func (r *result) summary() string {
+	return fmt.Sprintf(
+		"%s %s - DNS: %s, TCP: %s, TLS: %s, Server processing: %s, Total: %s",
+		r.response.Proto,
+		r.response.Status,
+		r.dnsLookup,
+		r.tcpConnect,
+		r.tlsHandshake,
+		r.serverProcessing,
+		r.roundTrip,
+	)
+}
+
 type resultSummary struct {
 	dnsLookups       []*time.Duration
 	tcpConnects      []*time.Duration
@@ -82,27 +103,6 @@ func (s *resultSummary) String() string {
 	sb.WriteString(fmt.Sprintf("Average server processing: %s\n", average(s.serverProcessing)))
 	sb.WriteString(fmt.Sprintf("Average round trip: %s\n", average(s.roundTrips)))
 	return sb.String()
-}
-
-func (r *result) summary() string {
-	return fmt.Sprintf(
-		"%s %s - DNS: %s, TCP: %s, TLS: %s, Server processing: %s, Total: %s",
-		r.response.Proto,
-		r.response.Status,
-		r.dnsLookup,
-		r.tcpConnect,
-		r.tlsHandshake,
-		r.serverProcessing,
-		r.roundTrip,
-	)
-}
-
-func (r *result) load(t *traceTimes) {
-	r.dnsLookup = t.dnsDone.Sub(t.dnsStart)
-	r.tcpConnect = t.connectDone.Sub(t.connectStart)
-	r.tlsHandshake = t.tlsHandshakeDone.Sub(t.tlsHandshakeStart)
-	r.serverProcessing = t.firstResponseByte.Sub(t.conn)
-	r.roundTrip = t.roundTripDone.Sub(t.roundTripStart)
 }
 
 func run(stdout io.Writer) error {
