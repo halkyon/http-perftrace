@@ -2,13 +2,14 @@ package main
 
 import (
 	"crypto/tls"
+	"errors"
+	"flag"
 	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptrace"
 	"os"
 	"runtime"
-	"strconv"
 	"time"
 )
 
@@ -18,7 +19,7 @@ const (
 )
 
 func main() {
-	if err := run(os.Args, os.Stdout); err != nil {
+	if err := run(os.Stdout); err != nil {
 		fmt.Fprintf(os.Stderr, "%s\n", err)
 		os.Exit(exitFail)
 	}
@@ -67,17 +68,19 @@ func (r *result) load(t *traceTimes) {
 	r.roundTrip = t.roundTripDone.Sub(t.roundTripStart)
 }
 
-func run(args []string, stdout io.Writer) error {
-	if len(args) < 2 {
-		fmt.Fprintf(stdout, "Usage: %s http://someurl.com\n", args[0])
-		return nil
-	}
-
+func run(stdout io.Writer) error {
+	var url string
 	var concurrency int
-	if len(args) == 3 {
-		concurrency, _ = strconv.Atoi(args[2])
-	} else {
-		concurrency = 1
+
+	flag.StringVar(&url, "u", "", "url to test")
+	flag.IntVar(&concurrency, "c", 1, "number of concurrent requests")
+	flag.Parse()
+
+	if url == "" {
+		return errors.New("-u not provided")
+	}
+	if concurrency < 1 {
+		return errors.New("-c should be greater or equal to 1")
 	}
 
 	runtime.GOMAXPROCS(concurrency)
@@ -85,7 +88,7 @@ func run(args []string, stdout io.Writer) error {
 	results := make(chan *result)
 	for i := 0; i < concurrency; i++ {
 		go func() {
-			runTest(args[1], results, stdout)
+			runTest(url, results, stdout)
 		}()
 	}
 
@@ -103,9 +106,9 @@ func run(args []string, stdout io.Writer) error {
 	return nil
 }
 
-func runTest(addr string, results chan *result, stdout io.Writer) error {
+func runTest(url string, results chan *result, stdout io.Writer) error {
 	times := &traceTimes{}
-	req, err := newRequest(addr, times)
+	req, err := newRequest(url, times)
 	if err != nil {
 		return err
 	}
@@ -127,8 +130,8 @@ func runTest(addr string, results chan *result, stdout io.Writer) error {
 	return nil
 }
 
-func newRequest(addr string, times *traceTimes) (*http.Request, error) {
-	req, err := http.NewRequest("GET", addr, nil)
+func newRequest(url string, times *traceTimes) (*http.Request, error) {
+	req, err := http.NewRequest("GET", url, nil)
 	if err != nil {
 		return nil, err
 	}
