@@ -13,6 +13,7 @@ import (
 	"os/signal"
 	"runtime"
 	"strings"
+	"syscall"
 	"time"
 )
 
@@ -131,12 +132,12 @@ func run(stdout io.Writer) error {
 
 	runtime.GOMAXPROCS(concurrency)
 
+	summary := &resultSummary{}
 	results := make(chan *result)
 	errs := make(chan error)
 	done := time.After(testDuration)
-
 	interrupt := make(chan os.Signal, 1)
-	signal.Notify(interrupt, os.Interrupt)
+	signal.Notify(interrupt, syscall.SIGHUP, syscall.SIGINT, syscall.SIGTERM, syscall.SIGQUIT)
 
 	for i := 0; i < concurrency; i++ {
 		go func(results chan *result, errs chan error) {
@@ -151,8 +152,6 @@ func run(stdout io.Writer) error {
 			}
 		}(results, errs)
 	}
-
-	summary := &resultSummary{}
 
 	for {
 		select {
